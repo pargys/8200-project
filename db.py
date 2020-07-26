@@ -69,6 +69,22 @@ class DBTable:
         finally:
             s.close()
 
+    # def __is_condition_hold(self, key_field: Any, criterion: SelectionCriteria):
+    def delete_records(self, criteria: List[SelectionCriteria]) -> None:
+        s = shelve.open(f'{self.name}.db')
+        try:
+            for row in s[self.name].values():
+                for criterion in criteria:
+                    #if the condition is on the key???
+
+                    if self.__is_condition_hold(s, row, criterion):
+                        break
+                else:
+                    self.delete_record(row)
+        finally:
+            s.close()
+
+
 
 @dataclass_json
 @dataclass
