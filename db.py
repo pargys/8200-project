@@ -36,6 +36,28 @@ class DBTable:
             s.close()
         return count_rows
 
+    def insert_record(self, values: Dict[str, Any]) -> None:
+        if None == values.get(self.key_field_name):
+            raise ValueError
+        s = shelve.open(f'{self.name}.db')
+        try:
+            s[self.name][values[self.key_field_name]] = dict
+            for dbfield in self.fields:
+                field = dbfield.name
+                if field == self.key_field_name:
+                    continue
+                s[self.name][values[self.key_field_name]][field] = values[field] if values.get(field) else None
+                values.pop(field)
+            if 1 < len(values):
+                self.delete_record(values[self.key_field_name])
+                s.close()
+                raise ValueError
+        finally:
+            s.close()
+
+    def delete_record(self, key: Any) -> None:
+        raise NotImplementedError
+
 
 @dataclass_json
 @dataclass
