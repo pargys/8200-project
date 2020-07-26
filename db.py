@@ -56,7 +56,17 @@ class DBTable:
             s.close()
 
     def delete_record(self, key: Any) -> None:
-        raise NotImplementedError
+        s = shelve.open(f'{self.name}.db')
+        try:
+            if s[self.name].get(key):
+                s[self.name].pop(key)
+            else:
+                s.close()
+                raise ValueError
+        finally:
+            s.close()
+
+
 
 
 @dataclass_json
