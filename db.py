@@ -28,6 +28,14 @@ class DBTable:
     fields: List[DBField]
     key_field_name: str
 
+    def count(self) -> int:
+        s = shelve.open(f'{self.name}.db')
+        try:
+            count_rows = len(s[self.name].keys())
+        finally:
+            s.close()
+        return count_rows
+
 
 @dataclass_json
 @dataclass
