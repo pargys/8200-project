@@ -37,10 +37,13 @@ class DBTable:
         return count_rows
 
     def insert_record(self, values: Dict[str, Any]) -> None:
-        if None == values.get(self.key_field_name):
+        if None == values.get(self.key_field_name): # there is no primary key
             raise ValueError
         s = shelve.open(f'{self.name}.db')
         try:
+            if s[self.name].get(values[self.key_field_name]): # record already exists
+                s.close()
+                raise ValueError
             s[self.name][values[self.key_field_name]] = dict
             for dbfield in self.fields:
                 field = dbfield.name
@@ -65,8 +68,6 @@ class DBTable:
                 raise ValueError
         finally:
             s.close()
-
-
 
 
 @dataclass_json
