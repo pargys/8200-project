@@ -31,6 +31,10 @@ class DBTable(db_api.DBTable):
     fields: List[DBField]
     key_field_name: str
 
+    def __is_condition_hold(self, s: Dict[Any, Any], criterion: SelectionCriteria):
+        return eval(f'{s[criterion.field_name]}{criterion.operator}{criterion.value}')
+
+
     def count(self) -> int:
         s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
         try:
@@ -40,12 +44,11 @@ class DBTable(db_api.DBTable):
         return count_rows
 
     def insert_record(self, values: Dict[str, Any]) -> None:
-        if None == values.get(self.key_field_name): # there is no primary key
+        if None is values.get(self.key_field_name): # there is no primary key
             raise ValueError
         s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
         try:
             if s[self.name].get(values[self.key_field_name]): # record already exists
-                s.close()
                 raise ValueError
 
             s[self.name][values[self.key_field_name]] = {}
@@ -58,7 +61,6 @@ class DBTable(db_api.DBTable):
                 values.pop(field)
             if 1 < len(values): # insert unnecessary field
                 self.delete_record(values[self.key_field_name])
-                s.close()
                 raise ValueError
         finally:
             s.close()
@@ -69,31 +71,20 @@ class DBTable(db_api.DBTable):
             if s[self.name].get(key):
                 s[self.name].pop(key)
             else:
-                s.close()
                 raise ValueError
         finally:
             s.close()
 
-    # def __is_condition_hold(self, key_field: Any, criterion: SelectionCriteria):
     def delete_records(self, criteria: List[SelectionCriteria]) -> None:
-        s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
-        try:
-            for row in s[self.name].values():
-                for criterion in criteria:
-                    #if the condition is on the key???
-
-                    if self.__is_condition_hold(s, row, criterion):
-                        break
-                else:
-                    self.delete_record(row)
-        finally:
-            s.close()
+        list_to_delete = self.query_table(criteria)
+        for row in list_to_delete:
+            key = row[self.key_field_name]
+            self.delete_record(key)
 
     def get_record(self, key: Any) -> Dict[str, Any]:
         s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
         try:
-            if None == s[self.name].get(key): # if this key isn't exist
-                s.close()
+            if None is s[self.name].get(key): # if this key isn't exist
                 raise ValueError
 
             row = s[self.name][key]
@@ -105,14 +96,12 @@ class DBTable(db_api.DBTable):
     def update_record(self, key: Any, values: Dict[str, Any]) -> None:
         s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
         try:
-            if None == s[self.name].get(key): # if this key isn't exist
-                s.close()
+            if None is s[self.name].get(key): # if this key isn't exist
                 raise ValueError
             updated_row = {}
             for dbfield in self.fields:
                 field = dbfield.name
                 if values.get(field) == self.key_field_name: # cannot update the primary key
-                    s.close()
                     raise ValueError
                 if values.get(field):
                     updated_row[field] = values[field]
@@ -121,7 +110,6 @@ class DBTable(db_api.DBTable):
                     updated_row[field] = s[self.name][key][field]
 
             if values: # insert unnecessary field
-                s.close()
                 raise ValueError
             s[self.name][key] = updated_row
         finally:
@@ -129,7 +117,26 @@ class DBTable(db_api.DBTable):
 
     def query_table(self, criteria: List[SelectionCriteria]) \
             -> List[Dict[str, Any]]:
-        raise NotImplementedError
+        s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
+        try:
+            desired_lines = []
+            for row in s[self.name].values():
+                for criterion in criteria:
+                    if s[self.name][row].get(criterion.field_name) is None:  # if this key isn't exist
+                        raise ValueError
+
+                    if criterion.field_name == self.key_field_name:  # condition on key
+                        if self.__is_condition_hold({criterion.field_name: row}, criterion) is False:
+                            break
+                    if self.__is_condition_hold(s, row, criterion) is False:
+                        break
+                else:
+                    result = s[self.name][row]
+                    result[self.key_field_name] = row
+                    desired_lines.append(result)
+        finally:
+            s.close()
+        return desired_lines
 
     def create_index(self, field_to_index: str) -> None:
         raise NotImplementedError
@@ -165,7 +172,7 @@ class DataBase(db_api.DataBase):
         raise ValueError
 
     def delete_table(self, table_name: str) -> None:
-        if None == DataBase.db_tables.get(table_name):
+        if None is DataBase.db_tables.get(table_name):
             raise ValueError
         DataBase.db_tables.pop(table_name)
         s = (os.path.join('db_files', table_name + ".db.bak"))
