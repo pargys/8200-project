@@ -2,20 +2,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Type
 from dataclasses_json import dataclass_json
-DB_ROOT = Path('db_files')
-
+import db_api
 import shelve
+import os
+
+
+DB_ROOT = Path('db_files')
 
 @dataclass_json
 @dataclass
-class DBField:
+class DBField(db_api.DBField):
     name: str
     type: Type
 
 
 @dataclass_json
 @dataclass
-class SelectionCriteria:
+class SelectionCriteria(db_api.SelectionCriteria):
     field_name: str
     operator: str
     value: Any
@@ -23,13 +26,13 @@ class SelectionCriteria:
 
 @dataclass_json
 @dataclass
-class DBTable:
+class DBTable(db_api.DBTable):
     name: str
     fields: List[DBField]
     key_field_name: str
 
     def count(self) -> int:
-        s = shelve.open(f'{self.name}.db')
+        s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
         try:
             count_rows = len(s[self.name].keys())
         finally:
@@ -39,12 +42,14 @@ class DBTable:
     def insert_record(self, values: Dict[str, Any]) -> None:
         if None == values.get(self.key_field_name): # there is no primary key
             raise ValueError
-        s = shelve.open(f'{self.name}.db')
+        s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
         try:
             if s[self.name].get(values[self.key_field_name]): # record already exists
                 s.close()
                 raise ValueError
-            s[self.name][values[self.key_field_name]] = dict
+
+            s[self.name][values[self.key_field_name]] = {}
+
             for dbfield in self.fields:
                 field = dbfield.name
                 if field == self.key_field_name:
@@ -59,7 +64,7 @@ class DBTable:
             s.close()
 
     def delete_record(self, key: Any) -> None:
-        s = shelve.open(f'{self.name}.db')
+        s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
         try:
             if s[self.name].get(key):
                 s[self.name].pop(key)
@@ -71,7 +76,7 @@ class DBTable:
 
     # def __is_condition_hold(self, key_field: Any, criterion: SelectionCriteria):
     def delete_records(self, criteria: List[SelectionCriteria]) -> None:
-        s = shelve.open(f'{self.name}.db')
+        s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
         try:
             for row in s[self.name].values():
                 for criterion in criteria:
@@ -84,34 +89,54 @@ class DBTable:
         finally:
             s.close()
 
+    def get_record(self, key: Any) -> Dict[str, Any]:
+        raise NotImplementedError
+
+    def update_record(self, key: Any, values: Dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    def query_table(self, criteria: List[SelectionCriteria]) \
+            -> List[Dict[str, Any]]:
+        raise NotImplementedError
+
+    def create_index(self, field_to_index: str) -> None:
+        raise NotImplementedError
 
 
 @dataclass_json
 @dataclass
-class DataBase:
+class DataBase(db_api.DataBase):
+    db_tables: dict
     # Put here any instance information needed to support the API
     def create_table(self,
                      table_name: str,
                      fields: List[DBField],
                      key_field_name: str) -> DBTable:
-        s = shelve.open(f'{table_name}.db', writeback=True)
+        if self.db_tables.get(table_name): # if this table name already exist
+            raise ValueError
+
+        s = shelve.open(os.path.join('db_files', table_name + '.db'), writeback=True)
         try:
-            s[table_name] = dict
+            s[table_name] = {}
         finally:
             s.close()
-        return DBTable(table_name, fields, key_field_name)
+        new_table = DBTable(table_name, fields, key_field_name)
+        self.tables_names[table_name] = new_table
+        return new_table
 
     def num_tables(self) -> int:
-        raise NotImplementedError
+        return len(self.tables_names)
 
     def get_table(self, table_name: str) -> DBTable:
-        raise NotImplementedError
+        if self.db_tables.get(table_name):
+            return self.db_tables[table_name]
+        raise ValueError
 
     def delete_table(self, table_name: str) -> None:
         raise NotImplementedError
 
     def get_tables_names(self) -> List[Any]:
-        raise NotImplementedError
+        return [db_table for db_table in self.db_tables.keys()]
 
     def query_multiple_tables(
             self,
