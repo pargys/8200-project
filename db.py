@@ -6,6 +6,8 @@ import db_api
 import shelve
 import os
 
+flag = False
+
 
 DB_ROOT = Path('db_files')
 
@@ -32,6 +34,20 @@ class DBTable(db_api.DBTable):
     key_field_name: str
 
     def __is_condition_hold(self, s: Dict[Any, Any], criterion: SelectionCriteria):
+        if None is s[criterion.field_name]:
+            return False
+        if criterion.operator == "=":
+            return s[criterion.field_name] == criterion.value
+        if criterion.operator == "!=":
+            return s[criterion.field_name] != criterion.value
+        if criterion.operator == "<":
+            return s[criterion.field_name] < criterion.value
+        if criterion.operator == ">":
+            return s[criterion.field_name] > criterion.value
+        if criterion.operator == "<=":
+            return s[criterion.field_name] <= criterion.value
+        if criterion.operator == ">=":
+            return s[criterion.field_name] >= criterion.value
         return eval(f'{s[criterion.field_name]}{criterion.operator}{criterion.value}')
 
 
@@ -98,11 +114,14 @@ class DBTable(db_api.DBTable):
         try:
             if None is s[self.name].get(key): # if this key isn't exist
                 raise ValueError
+            if values.get(self.key_field_name): # cannot update the primary key
+                raise ValueError
             updated_row = {}
             for dbfield in self.fields:
                 field = dbfield.name
-                if values.get(field) == self.key_field_name: # cannot update the primary key
-                    raise ValueError
+                if field == self.key_field_name:
+                    continue
+
                 if values.get(field):
                     updated_row[field] = values[field]
                     values.pop(field)
@@ -120,16 +139,18 @@ class DBTable(db_api.DBTable):
         s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
         try:
             desired_lines = []
-            for row in s[self.name].values():
+            for row in s[self.name]:
                 for criterion in criteria:
-                    if s[self.name][row].get(criterion.field_name) is None:  # if this key isn't exist
-                        raise ValueError
-
                     if criterion.field_name == self.key_field_name:  # condition on key
                         if self.__is_condition_hold({criterion.field_name: row}, criterion) is False:
                             break
-                    if self.__is_condition_hold(s, row, criterion) is False:
+
+                    elif s[self.name][row].get(criterion.field_name) is None:  # if this key isn't exist
+                        raise ValueError
+
+                    elif self.__is_condition_hold(s[self.name][row], criterion) is False:
                         break
+
                 else:
                     result = s[self.name][row]
                     result[self.key_field_name] = row
@@ -146,14 +167,27 @@ class DBTable(db_api.DBTable):
 @dataclass
 class DataBase(db_api.DataBase):
     db_tables = {}
-    # Put here any instance information needed to support the API
+
+    def __init__(self):
+        s = shelve.open(os.path.join('db_files', 'DataBase' + '.db'), writeback=True)
+        for table_name in s:
+            DataBase.db_tables[table_name] = DBTable(table_name, s[table_name]["fields"], s[table_name]["key_field_name"])
+
     def create_table(self,
                      table_name: str,
                      fields: List[DBField],
                      key_field_name: str) -> DBTable:
+        if key_field_name not in [field.name for field in fields]:
+            raise ValueError
         if DataBase.db_tables.get(table_name): # if this table name already exist
             raise ValueError
-
+        s = shelve.open(os.path.join('db_files', 'DataBase' + '.db'), writeback=True)
+        try:
+            s[table_name] = {}
+            s[table_name]["fields"] = fields
+            s[table_name]["key_field_name"] = key_field_name
+        finally:
+            s.close()
         s = shelve.open(os.path.join('db_files', table_name + '.db'), writeback=True)
         try:
             s[table_name] = {}
@@ -174,6 +208,11 @@ class DataBase(db_api.DataBase):
     def delete_table(self, table_name: str) -> None:
         if None is DataBase.db_tables.get(table_name):
             raise ValueError
+        s = shelve.open(os.path.join('db_files', 'DataBase' + '.db'), writeback=True)
+        try:
+            s.pop(table_name)
+        finally:
+            s.close()
         DataBase.db_tables.pop(table_name)
         s = (os.path.join('db_files', table_name + ".db.bak"))
         os.remove(s)
