@@ -133,7 +133,15 @@ class DataBase(db_api.DataBase):
         raise ValueError
 
     def delete_table(self, table_name: str) -> None:
-        raise NotImplementedError
+        if None == self.db_tables.get(table_name):
+            raise ValueError
+        self.db_tables.pop(table_name)
+        s = (os.path.join('db_files', table_name + ".db.bak"))
+        os.remove(s)
+        s = (os.path.join('db_files', table_name + ".db.dat"))
+        os.remove(s)
+        s = (os.path.join('db_files', table_name + ".db.dir"))
+        os.remove(s)
 
     def get_tables_names(self) -> List[Any]:
         return [db_table for db_table in self.db_tables.keys()]
