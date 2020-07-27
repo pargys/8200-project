@@ -56,7 +56,7 @@ class DBTable(db_api.DBTable):
                     continue
                 s[self.name][values[self.key_field_name]][field] = values[field] if values.get(field) else None
                 values.pop(field)
-            if 1 < len(values):
+            if 1 < len(values): # insert unnecessary field
                 self.delete_record(values[self.key_field_name])
                 s.close()
                 raise ValueError
@@ -92,18 +92,40 @@ class DBTable(db_api.DBTable):
     def get_record(self, key: Any) -> Dict[str, Any]:
         s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
         try:
-            if None == s[self.name].get(key):
+            if None == s[self.name].get(key): # if this key isn't exist
                 s.close()
                 raise ValueError
-            else:
-                row = s[self.name][key]
+
+            row = s[self.name][key]
         finally:
             s.close()
         row[self.key_field_name] = key
         return row
 
     def update_record(self, key: Any, values: Dict[str, Any]) -> None:
-        raise NotImplementedError
+        s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
+        try:
+            if None == s[self.name].get(key): # if this key isn't exist
+                s.close()
+                raise ValueError
+            updated_row = {}
+            for dbfield in self.fields:
+                field = dbfield.name
+                if values.get(field) == self.key_field_name: # cannot update the primary key
+                    s.close()
+                    raise ValueError
+                if values.get(field):
+                    updated_row[field] = values[field]
+                    values.pop(field)
+                else:
+                    updated_row[field] = s[self.name][key][field]
+
+            if values: # insert unnecessary field
+                s.close()
+                raise ValueError
+            s[self.name][key] = updated_row
+        finally:
+            s.close()
 
     def query_table(self, criteria: List[SelectionCriteria]) \
             -> List[Dict[str, Any]]:
@@ -122,7 +144,7 @@ class DataBase(db_api.DataBase):
                      table_name: str,
                      fields: List[DBField],
                      key_field_name: str) -> DBTable:
-        if self.db_tables.get(table_name): # if this table name already exist
+        if DataBase.db_tables.get(table_name): # if this table name already exist
             raise ValueError
 
         s = shelve.open(os.path.join('db_files', table_name + '.db'), writeback=True)
@@ -131,21 +153,21 @@ class DataBase(db_api.DataBase):
         finally:
             s.close()
         new_table = DBTable(table_name, fields, key_field_name)
-        self.db_tables[table_name] = new_table
+        DataBase.db_tables[table_name] = new_table
         return new_table
 
     def num_tables(self) -> int:
-        return len(self.db_tables)
+        return len(DataBase.db_tables)
 
     def get_table(self, table_name: str) -> DBTable:
-        if self.db_tables.get(table_name):
-            return self.db_tables[table_name]
+        if DataBase.db_tables.get(table_name):
+            return DataBase.db_tables[table_name]
         raise ValueError
 
     def delete_table(self, table_name: str) -> None:
-        if None == self.db_tables.get(table_name):
+        if None == DataBase.db_tables.get(table_name):
             raise ValueError
-        self.db_tables.pop(table_name)
+        DataBase.db_tables.pop(table_name)
         s = (os.path.join('db_files', table_name + ".db.bak"))
         os.remove(s)
         s = (os.path.join('db_files', table_name + ".db.dat"))
@@ -154,7 +176,7 @@ class DataBase(db_api.DataBase):
         os.remove(s)
 
     def get_tables_names(self) -> List[Any]:
-        return [db_table for db_table in self.db_tables.keys()]
+        return [db_table for db_table in DataBase.db_tables.keys()]
 
     def query_multiple_tables(
             self,
