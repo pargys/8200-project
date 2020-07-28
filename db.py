@@ -14,24 +14,21 @@ DB_ROOT = Path('db_files')
 @dataclass_json
 @dataclass
 class DBField(db_api.DBField):
-    name: str
-    type: Type
-
+    pass
 
 @dataclass_json
 @dataclass
 class SelectionCriteria(db_api.SelectionCriteria):
-    field_name: str
-    operator: str
-    value: Any
-
+    pass
 
 @dataclass_json
 @dataclass
 class DBTable(db_api.DBTable):
-    name: str
-    fields: List[DBField]
-    key_field_name: str
+    # def __init__(self, name: str, fields: List[DBField], key_field_name:  str):
+    #     self.name = name
+    #     self.fields = fields
+    #     self.key_field_name = key_field_name
+    #     self.hash_index = {}
 
     def __is_condition_hold(self, s: Dict[Any, Any], criterion: SelectionCriteria):
         if None is s[criterion.field_name]:
@@ -49,7 +46,6 @@ class DBTable(db_api.DBTable):
         if criterion.operator == ">=":
             return s[criterion.field_name] >= criterion.value
         return eval(f'{s[criterion.field_name]}{criterion.operator}{criterion.value}')
-
 
     def count(self) -> int:
         s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
@@ -78,6 +74,7 @@ class DBTable(db_api.DBTable):
             if 1 < len(values): # insert unnecessary field
                 self.delete_record(values[self.key_field_name])
                 raise ValueError
+
         finally:
             s.close()
 
@@ -138,6 +135,14 @@ class DBTable(db_api.DBTable):
             -> List[Dict[str, Any]]:
         s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
         try:
+            # for criterion in criteria:
+            #     if criterion.field_name == self.key_field_name and criterion.operator == '=':
+            #         if s[self.name].get(criterion.value):
+            #             result = s[self.name][criterion.value]
+            #             result[self.key_field_name] = criterion.value
+            #             return [result]
+            #         return []
+
             desired_lines = []
             for row in s[self.name]:
                 for criterion in criteria:
@@ -160,7 +165,28 @@ class DBTable(db_api.DBTable):
         return desired_lines
 
     def create_index(self, field_to_index: str) -> None:
-        raise NotImplementedError
+        if field_to_index == self.key_field_name: # no need to index the primary key
+            return
+        s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
+        try:
+            for row in s[self.name]: # if the field_to_index isn't exist(just 1 iteration)
+                if None is s[self.name][row].get(field_to_index):
+                    raise ValueError
+                break
+
+            s['hash_index'] = {}
+            s['hash_index'][field_to_index] = {}
+
+            for row in s[self.name]:
+                if None is s[self.name][row][field_to_index]:
+                    continue
+                if None is s['hash_index'][field_to_index].get(s[self.name][row][field_to_index]):
+                    s['hash_index'][field_to_index][s[self.name][row][field_to_index]] = []
+                else:
+                    s['hash_index'][field_to_index][s[self.name][row][field_to_index]].append(row)
+        finally:
+            s.close()
+
 
 
 @dataclass_json
