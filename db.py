@@ -75,12 +75,19 @@ class DBTable(db_api.DBTable):
                 self.delete_record(values[self.key_field_name])
                 raise ValueError
 
+            for field in s['hash_index']: # update hash index
+                if values[field]:
+                    s['hash_index'][field] = values[field]
         finally:
             s.close()
 
     def delete_record(self, key: Any) -> None:
         s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
         try:
+            for field in s['hash_index']: # update hash index
+                if s[self.name][key][field]:
+                    s['hash_index'][field].remove(key)
+
             if s[self.name].get(key):
                 s[self.name].pop(key)
             else:
