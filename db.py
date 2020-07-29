@@ -169,8 +169,30 @@ class DBTable(db_api.DBTable):
                         return [result]
                     return []
 
+            indexes = []
+            for i in range(len(self.hash_index)): # if the criterion is on a field that has an index
+                if self.hash_index[i]:
+                    for criterion in criteria:
+                        if self.fields[i].name == criterion.field_name and criterion.operator == "=":
+                            indexes_file = shelve.open(os.path.join('db_files', self.name + '_' + criterion.field_name + '_hash_index.db'), writeback=True)
+                            indexes = indexes_file[criterion.value]
+                            indexes_file.close()
+                            if not indexes:
+                                return []
+                            break
 
             desired_lines = []
+            if indexes:
+                for index in indexes:
+                    for criterion in criteria:
+                        if self.__is_condition_hold(s[self.name][index], criterion) is False:
+                            break
+                    else:
+                        result = s[self.name][index]
+                        result[self.key_field_name] = index
+                        desired_lines.append(result)
+                return desired_lines
+
             for row in s[self.name]:
                 for criterion in criteria:
                     if criterion.field_name == self.key_field_name:  # condition on key
