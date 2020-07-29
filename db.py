@@ -24,11 +24,11 @@ class SelectionCriteria(db_api.SelectionCriteria):
 @dataclass_json
 @dataclass
 class DBTable(db_api.DBTable):
-    # def __init__(self, name: str, fields: List[DBField], key_field_name:  str):
-    #     self.name = name
-    #     self.fields = fields
-    #     self.key_field_name = key_field_name
-    #     self.hash_index = {}
+    def __init__(self, name: str, fields: List[DBField], key_field_name:  str, hash_index=None):
+        self.name = name
+        self.fields = fields
+        self.key_field_name = key_field_name
+        self.hash_index = hash_index if hash_index else [False for i in range(len(fields))]
 
     def __is_condition_hold(self, s: Dict[Any, Any], criterion: SelectionCriteria):
         if None is s[criterion.field_name]:
@@ -59,6 +59,8 @@ class DBTable(db_api.DBTable):
         if None is values.get(self.key_field_name): # there is no primary key
             raise ValueError
         s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
+        indexes_file = shelve.open(os.path.join('db_files', self.name + '_index.db'), writeback=True)
+
         try:
             if s[self.name].get(values[self.key_field_name]): # record already exists
                 raise ValueError
@@ -75,23 +77,30 @@ class DBTable(db_api.DBTable):
                 self.delete_record(values[self.key_field_name])
                 raise ValueError
 
-            for field in s['hash_index']: # update hash index
-                if values[field]:
-                    s['hash_index'][field] = values[field]
+            for i in range(len(self.hash_index)): # update hash index
+                if self.hash_index[i]:
+                    indexes_file = shelve.open(os.path.join('db_files', self.name + '_' + self.fields[i].name + '_hash_index.db'), writeback=True)
+                    if values.get(self.fields[i].name):
+                        indexes_file[values[self.fields[i].name]].append(values[self.key_field_name])
+                    indexes_file.close()
         finally:
             s.close()
+            indexes_file.close()
 
     def delete_record(self, key: Any) -> None:
         s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
         try:
-            for field in s['hash_index']: # update hash index
-                if s[self.name][key][field]:
-                    s['hash_index'][field].remove(key)
-
-            if s[self.name].get(key):
-                s[self.name].pop(key)
-            else:
+            if None is s[self.name].get(key): # if this key isn't exist
                 raise ValueError
+
+            for i in range(len(self.hash_index)): # update hash index
+                if self.hash_index[i]:
+                    if s[self.name][key][self.fields[i].name]:
+                        indexes_file = shelve.open(os.path.join('db_files', self.name + '_' + self.fields[i].name + '_hash_index.db'), writeback=True)
+                        indexes_file[s[self.name][key][self.fields[i].name]].remove(key)
+                        indexes_file.close()
+
+            s[self.name].pop(key)
         finally:
             s.close()
 
@@ -127,8 +136,18 @@ class DBTable(db_api.DBTable):
                     continue
 
                 if values.get(field):
+                    index = self.fields.index(dbfield)
+                    if self.hash_index[index]:
+                        indexes_file = shelve.open(os.path.join('db_files', self.name + '_' + field + '_hash_index.db'),writeback=True)
+                        indexes_file[s[self.name][key][field]].remove(key)
+                        if values[field]:
+                            if None is indexes_file.get(values[field]):
+                                indexes_file[values[field]] = list()
+                            indexes_file[values[field]].append(key)
+                        indexes_file.close()
                     updated_row[field] = values[field]
                     values.pop(field)
+
                 else:
                     updated_row[field] = s[self.name][key][field]
 
@@ -142,13 +161,14 @@ class DBTable(db_api.DBTable):
             -> List[Dict[str, Any]]:
         s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
         try:
-            # for criterion in criteria:
-            #     if criterion.field_name == self.key_field_name and criterion.operator == '=':
-            #         if s[self.name].get(criterion.value):
-            #             result = s[self.name][criterion.value]
-            #             result[self.key_field_name] = criterion.value
-            #             return [result]
-            #         return []
+            for criterion in criteria: # if the criterion is on key
+                if criterion.field_name == self.key_field_name and criterion.operator == '=':
+                    if s[self.name].get(criterion.value):
+                        result = s[self.name][criterion.value]
+                        result[self.key_field_name] = criterion.value
+                        return [result]
+                    return []
+
 
             desired_lines = []
             for row in s[self.name]:
@@ -174,26 +194,34 @@ class DBTable(db_api.DBTable):
     def create_index(self, field_to_index: str) -> None:
         if field_to_index == self.key_field_name: # no need to index the primary key
             return
+
+        fields_names = [field.name for field in self.fields]
+        index = fields_names.index(field_to_index)
+
+        if self.hash_index[index]: # there is already an index on this field
+            return
+
         s = shelve.open(os.path.join('db_files', self.name + '.db'), writeback=True)
+        indexes_file = shelve.open(os.path.join('db_files', self.name + '_' + field_to_index + '_hash_index.db'), writeback=True)
+        data_file = shelve.open(os.path.join('db_files', 'DataBase' + '.db'), writeback=True)
         try:
             for row in s[self.name]: # if the field_to_index isn't exist(just 1 iteration)
                 if None is s[self.name][row].get(field_to_index):
                     raise ValueError
                 break
 
-            s['hash_index'] = {}
-            s['hash_index'][field_to_index] = {}
-
             for row in s[self.name]:
                 if None is s[self.name][row][field_to_index]:
                     continue
-                if None is s['hash_index'][field_to_index].get(s[self.name][row][field_to_index]):
-                    s['hash_index'][field_to_index][s[self.name][row][field_to_index]] = []
-                else:
-                    s['hash_index'][field_to_index][s[self.name][row][field_to_index]].append(row)
+                if None is indexes_file.get(s[self.name][row][field_to_index]):
+                    indexes_file[s[self.name][row][field_to_index]] = list()
+                indexes_file[s[self.name][row][field_to_index]].append(row)
+
+            data_file[self.name]["hash_index"][index] = True
+            self.hash_index[index] = True
         finally:
             s.close()
-
+            indexes_file.close()
 
 
 @dataclass_json
@@ -219,6 +247,7 @@ class DataBase(db_api.DataBase):
             s[table_name] = {}
             s[table_name]["fields"] = fields
             s[table_name]["key_field_name"] = key_field_name
+            s[table_name]['hash_index'] = [False for i in range(len(fields))]
         finally:
             s.close()
         s = shelve.open(os.path.join('db_files', table_name + '.db'), writeback=True)
@@ -241,8 +270,17 @@ class DataBase(db_api.DataBase):
     def delete_table(self, table_name: str) -> None:
         if None is DataBase.db_tables.get(table_name):
             raise ValueError
-        s = shelve.open(os.path.join('db_files', 'DataBase' + '.db'), writeback=True)
+        s = shelve.open(os.path.join('db_files', 'DataBase.db'), writeback=True)
         try:
+            for field in s[table_name]['fields']:
+                if s[table_name]["hash_index"][s[table_name]["fields"].index(field)]:
+
+                    a = (os.path.join('db_files', table_name + '_' + field.name + '_hash_index.db.bak'))
+                    os.remove(a)
+                    a = (os.path.join('db_files', table_name + '_' + field.name + '_hash_index.db.dat'))
+                    os.remove(a)
+                    a = (os.path.join('db_files', table_name + '_' + field.name + '_hash_index.db.dir'))
+                    os.remove(a)
             s.pop(table_name)
         finally:
             s.close()
